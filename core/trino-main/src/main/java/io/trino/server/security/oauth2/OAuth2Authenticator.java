@@ -13,6 +13,7 @@
  */
 package io.trino.server.security.oauth2;
 
+import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.trino.server.security.AbstractBearerAuthenticator;
@@ -27,6 +28,7 @@ import jakarta.ws.rs.container.ContainerRequestContext;
 import java.net.URI;
 import java.sql.Date;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,7 +44,7 @@ public class OAuth2Authenticator
 {
     private static final Logger log = Logger.get(OAuth2Authenticator.class);
     private final OAuth2Client client;
-    private final String principalField;
+    private final List<String> principalFields;
     private final String scopes;
     private final UserMapping userMapping;
     private final TokenPairSerializer tokenPairSerializer;
@@ -53,7 +55,7 @@ public class OAuth2Authenticator
     public OAuth2Authenticator(OAuth2Client client, OAuth2Config config, TokenRefresher tokenRefresher, TokenPairSerializer tokenPairSerializer, OAuth2ServerConfigProvider serverConfigProvider)
     {
         this.client = requireNonNull(client, "service is null");
-        this.principalField = config.getPrincipalField();
+        this.principalFields = ImmutableList.copyOf(config.getPrincipalFields());
         this.scopes = String.join(" ", config.getScopes());
         this.tokenRefresher = requireNonNull(tokenRefresher, "tokenRefresher is null");
         this.tokenPairSerializer = requireNonNull(tokenPairSerializer, "tokenPairSerializer is null");
@@ -78,13 +80,24 @@ public class OAuth2Authenticator
         if (claims.isEmpty()) {
             return Optional.empty();
         }
-        Optional<String> principal = Optional.ofNullable((String) claims.get().get(principalField));
+        Optional<String> principal = firstNonEmptyString(claims.get(), principalFields);
         if (principal.isEmpty()) {
             return Optional.empty();
         }
         Identity.Builder builder = Identity.forUser(userMapping.mapUser(principal.get()));
         builder.withPrincipal(new BasicPrincipal(principal.get()));
         return Optional.of(builder.build());
+    }
+
+    static Optional<String> firstNonEmptyString(Map<String, Object> claims, List<String> fields)
+    {
+        for (String field : fields) {
+            Object value = claims.get(field);
+            if (value instanceof String string && !string.isEmpty()) {
+                return Optional.of(string);
+            }
+        }
+        return Optional.empty();
     }
 
     private Optional<TokenPair> deserializeToken(String token)
